@@ -12,3 +12,13 @@ export class PeerWireProtocolError extends PeerWireError {
 export class PeerWireEofError extends PeerWireError {
   override name = "PeerWireEofError";
 }
+
+/** Raised when a peer operation exceeds its configured deadline. */
+export class PeerWireTimeoutError extends PeerWireError {
+  override name = "PeerWireTimeoutError";
+}
+
+/** Raised when a peer explicitly rejects a block or hash request. */
+export class PeerWireRequestRejectedError extends PeerWireError {
+  override name = "PeerWireRequestRejectedError";
+}

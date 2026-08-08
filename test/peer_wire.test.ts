@@ -1,6 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "std/assert/mod.ts";
 import { HandshakeExtension } from "@src/constants.ts";
-import { Bitfield } from "@src/bitfield.ts";
 import {
   PeerWireEofError,
   PeerWireError,
@@ -75,7 +74,7 @@ Deno.test("PeerWire transfers blocks and tracks remote availability", async () =
   assertEquals(await right.readMessage(), { type: "have", pieceIndex: 4 });
   assertEquals([...right.remoteBitfield!.availablePieces()], [0, 4, 9]);
 
-  const block = Uint8Array.from({ length: 32_768 }, (_, index) => index & 0xff);
+  const block = Uint8Array.from({ length: 16_384 }, (_, index) => index & 0xff);
   await left.piece(3, 16_384, block);
   assertEquals(await right.readMessage(), {
     type: "piece",
@@ -185,6 +184,16 @@ Deno.test("PeerWire enforces negotiated extension capabilities", async () => {
   });
   await Promise.all([left.handshake(), right.handshake()]);
 
+  // Automatic BEP 10 handshakes are the first extended frames.
+  assertEquals((await left.readMessage())?.type, "extended");
+  assertEquals((await right.readMessage())?.type, "extended");
+
+  await left.haveAll();
+  assertEquals(await right.readMessage(), { type: "haveAll" });
+  assertEquals(right.remoteBitfield?.completedCount, 10);
+  await right.haveNone();
+  assertEquals(await left.readMessage(), { type: "haveNone" });
+
   await left.port(6881);
   assertEquals(await right.readMessage(), { type: "port", port: 6881 });
   await left.extended(0, new TextEncoder().encode("de"));
@@ -193,10 +202,6 @@ Deno.test("PeerWire enforces negotiated extension capabilities", async () => {
     extensionId: 0,
     payload: new TextEncoder().encode("de"),
   });
-  await left.send({ type: "haveAll" });
-  assertEquals(await right.readMessage(), { type: "haveAll" });
-  assertEquals(right.remoteBitfield?.completedCount, 10);
-
   await left.choke();
   assertEquals(await right.readMessage(), { type: "choke" });
   assertEquals(right.remoteChoking, true);
@@ -204,11 +209,6 @@ Deno.test("PeerWire enforces negotiated extension capabilities", async () => {
   assertEquals(await right.readMessage(), { type: "notInterested" });
   assertEquals(right.remoteInterested, false);
 
-  const bitfield = new Bitfield(10);
-  bitfield.set(3);
-  await left.bitfield(bitfield);
-  assertEquals((await right.readMessage())?.type, "bitfield");
-  assertEquals([...right.remoteBitfield!.availablePieces()], [3]);
   await left.cancel(2, 0, 16_384);
   assertEquals(await right.readMessage(), {
     type: "cancel",
@@ -219,21 +219,14 @@ Deno.test("PeerWire enforces negotiated extension capabilities", async () => {
 
   for (
     const message of [
-      { type: "haveNone" } as const,
       { type: "suggestPiece", pieceIndex: 2 } as const,
       { type: "allowedFast", pieceIndex: 2 } as const,
-      {
-        type: "rejectRequest",
-        pieceIndex: 2,
-        begin: 0,
-        length: 16_384,
-      } as const,
     ]
   ) {
     await left.send(message);
     assertEquals(await right.readMessage(), message);
   }
-  assertEquals(right.remoteBitfield?.completedCount, 0);
+  assertEquals(right.remoteBitfield?.completedCount, 10);
   await Promise.all([left.close(), right.close()]);
 });
 
@@ -273,8 +266,7 @@ Deno.test("PeerWire validates expected peer ID and remote piece indexes", async 
 
   const pair = createWires();
   await Promise.all([pair.left.handshake(), pair.right.handshake()]);
-  await pair.left.have(10);
-  await assertRejects(() => pair.right.readMessage(), PeerWireProtocolError);
+  await assertRejects(() => pair.left.have(10), RangeError);
   await Promise.all([pair.left.close(), pair.right.close()]);
 });
 

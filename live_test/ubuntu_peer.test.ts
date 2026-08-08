@@ -1,13 +1,15 @@
 import { HashUtil, NetUtil } from "@deno-torrent/toolkit";
 import { assert, assertEquals } from "std/assert/mod.ts";
+import { HandshakeExtension } from "@src/constants.ts";
 import { PeerWire } from "@src/peer_wire.ts";
+import { UtMetadataExtension } from "@src/ut_metadata.ts";
 
 const DEFAULT_TORRENT_URL =
-  "https://releases.ubuntu.com/24.04.4/ubuntu-24.04.4-live-server-amd64.iso.torrent";
+  "https://releases.ubuntu.com/26.04/ubuntu-26.04-desktop-amd64.iso.torrent";
 const decoder = new TextDecoder();
 
 Deno.test({
-  name: "PeerWire handshakes with a live Ubuntu torrent peer",
+  name: "PeerWire downloads metadata from a live Ubuntu torrent peer",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
@@ -27,38 +29,50 @@ Deno.test({
       `-PW0001-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
     );
     const peers = await announce(torrent, peerId);
-    assert(peers.length > 0, "Ubuntu tracker returned no IPv4 peers");
+    assert(peers.length > 0, "Ubuntu trackers returned no peers");
 
-    const attempts = peers.slice(0, 12).map((peer) =>
-      handshakeWithPeer(peer, torrent.infoHash, torrent.pieceCount, peerId)
+    const controllers = peers.slice(0, 12).map(() => new AbortController());
+    const attempts = peers.slice(0, controllers.length).map((peer, index) =>
+      fetchMetadataFromPeer(
+        peer,
+        torrent.infoHash,
+        torrent.pieceCount,
+        peerId,
+        controllers[index].signal,
+      )
     );
-    let remotePeerId: Uint8Array;
+    let result: LivePeerResult;
     try {
-      remotePeerId = await Promise.any(attempts);
+      result = await Promise.any(attempts);
     } catch (error) {
       if (error instanceof AggregateError) {
         const reasons = error.errors.map((reason) =>
           reason instanceof Error ? reason.message : String(reason)
         );
         throw new Error(
-          `could not handshake with ${attempts.length} Ubuntu peers: ${
+          `could not fetch metadata from ${attempts.length} Ubuntu peers: ${
             reasons.join("; ")
           }`,
         );
       }
       throw error;
     } finally {
+      // Promise.any leaves unsuccessful attempts running. Abort them after the
+      // first interoperable peer succeeds so the live test stays courteous.
+      for (const controller of controllers) controller.abort();
       await Promise.allSettled(attempts);
       await stopAnnounce(torrent, peerId).catch(() => undefined);
     }
 
-    assertEquals(remotePeerId.length, 20);
+    assertEquals(result.peerId.length, 20);
+    assertEquals(result.metadata, torrent.infoBytes);
   },
 });
 
 interface TorrentMetadata {
-  announceUrl: string;
+  announceUrls: string[];
   infoHash: Uint8Array;
+  infoBytes: Uint8Array;
   length: number;
   pieceCount: number;
 }
@@ -72,7 +86,31 @@ async function announce(
   torrent: TorrentMetadata,
   peerId: Uint8Array,
 ): Promise<PeerAddress[]> {
-  const url = announceUrl(torrent, peerId, "started", 50);
+  const results = await Promise.allSettled(
+    torrent.announceUrls.map((url) => announceTracker(url, torrent, peerId)),
+  );
+  const peers = results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : []
+  );
+  if (peers.length === 0) {
+    const reasons = results.flatMap((result) =>
+      result.status === "rejected" ? [String(result.reason)] : []
+    );
+    throw new Error(`Ubuntu trackers returned no peers: ${reasons.join("; ")}`);
+  }
+  // The same endpoint may be returned by more than one announce URL.
+  return [...new Map(peers.map((peer) => [
+    `${peer.hostname}:${peer.port}`,
+    peer,
+  ])).values()];
+}
+
+async function announceTracker(
+  trackerUrl: string,
+  torrent: TorrentMetadata,
+  peerId: Uint8Array,
+): Promise<PeerAddress[]> {
+  const url = announceUrl(trackerUrl, torrent, peerId, "started", 50);
   const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   assert(response.ok, `tracker announce failed: ${response.status}`);
 
@@ -82,40 +120,67 @@ async function announce(
   const dictionary = expectDictionary(value, "tracker response");
   const failure = dictionary.get("failure reason");
   if (failure) throw new Error(decoder.decode(expectBytes(failure)));
-  const peers = expectBytes(dictionary.get("peers"), "tracker peers");
-  assertEquals(peers.length % 6, 0, "invalid compact IPv4 peer list");
 
   const addresses: PeerAddress[] = [];
-  for (let offset = 0; offset < peers.length; offset += 6) {
-    const endpoint = NetUtil.compactIPv4ToEndpoint(
-      peers.subarray(offset, offset + 6),
-    );
-    addresses.push({
-      hostname: endpoint.host,
-      port: endpoint.port,
-    });
+  const peers4Value = dictionary.get("peers");
+  if (peers4Value !== undefined) {
+    if (peers4Value.type === "bytes") {
+      const peers4 = peers4Value.value;
+      assertEquals(peers4.length % 6, 0, "invalid compact IPv4 peer list");
+      for (let offset = 0; offset < peers4.length; offset += 6) {
+        const endpoint = NetUtil.compactIPv4ToEndpoint(
+          peers4.subarray(offset, offset + 6),
+        );
+        addresses.push({ hostname: endpoint.host, port: endpoint.port });
+      }
+    } else {
+      addresses.push(...decodeTrackerPeerList(peers4Value));
+    }
+  }
+  const peers6Value = dictionary.get("peers6");
+  if (peers6Value !== undefined) {
+    const peers6 = expectBytes(peers6Value, "tracker IPv6 peers");
+    assertEquals(peers6.length % 18, 0, "invalid compact IPv6 peer list");
+    for (let offset = 0; offset < peers6.length; offset += 18) {
+      addresses.push(compactIPv6Peer(peers6.subarray(offset, offset + 18)));
+    }
   }
   return addresses;
+}
+
+function decodeTrackerPeerList(value: BencodeValue): PeerAddress[] {
+  assert(value.type === "list", "tracker peers must be compact or a list");
+  return value.value.map((entry) => {
+    const peer = expectDictionary(entry, "tracker peer");
+    const hostname = decoder.decode(expectBytes(peer.get("ip"), "peer IP"));
+    const port = expectInteger(peer.get("port"), "peer port");
+    assert(port >= 1 && port <= 65_535, "peer port is out of range");
+    return { hostname, port };
+  });
 }
 
 async function stopAnnounce(
   torrent: TorrentMetadata,
   peerId: Uint8Array,
 ): Promise<void> {
-  const response = await fetch(announceUrl(torrent, peerId, "stopped", 0), {
-    signal: AbortSignal.timeout(5_000),
-  });
-  await response.body?.cancel();
+  await Promise.allSettled(torrent.announceUrls.map(async (trackerUrl) => {
+    const response = await fetch(
+      announceUrl(trackerUrl, torrent, peerId, "stopped", 0),
+      { signal: AbortSignal.timeout(5_000) },
+    );
+    await response.body?.cancel();
+  }));
 }
 
 function announceUrl(
+  trackerUrl: string,
   torrent: TorrentMetadata,
   peerId: Uint8Array,
   event: "started" | "stopped",
   numwant: number,
 ): string {
-  const separator = torrent.announceUrl.includes("?") ? "&" : "?";
-  return torrent.announceUrl + separator + [
+  const separator = trackerUrl.includes("?") ? "&" : "?";
+  return trackerUrl + separator + [
     `info_hash=${percentEncode(torrent.infoHash)}`,
     `peer_id=${percentEncode(peerId)}`,
     "port=6881",
@@ -128,15 +193,33 @@ function announceUrl(
   ].join("&");
 }
 
-async function handshakeWithPeer(
+function compactIPv6Peer(bytes: Uint8Array): PeerAddress {
+  assertEquals(bytes.length, 18, "compact IPv6 peer must contain 18 bytes");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const groups = Array.from(
+    { length: 8 },
+    (_, index) => view.getUint16(index * 2).toString(16),
+  );
+  return { hostname: groups.join(":"), port: view.getUint16(16) };
+}
+
+interface LivePeerResult {
+  peerId: Uint8Array;
+  metadata: Uint8Array;
+}
+
+async function fetchMetadataFromPeer(
   peer: PeerAddress,
   infoHash: Uint8Array,
   pieceCount: number,
   peerId: Uint8Array,
-): Promise<Uint8Array> {
+  signal: AbortSignal,
+): Promise<LivePeerResult> {
   let connection: Deno.TcpConn | undefined;
   let wire: PeerWire | undefined;
+  let readLoop: Promise<never> | undefined;
   try {
+    if (signal.aborted) throw abortReason(signal);
     connection = await withTimeout(
       Deno.connect({ hostname: peer.hostname, port: peer.port }),
       5_000,
@@ -144,24 +227,62 @@ async function handshakeWithPeer(
       undefined,
       (lateConnection) => lateConnection.close(),
     );
+    if (signal.aborted) throw abortReason(signal);
     wire = new PeerWire({
       transport: connection,
       infoHash,
       peerId,
       pieceCount,
+      extensions: [HandshakeExtension.ExtensionProtocol],
+      clientName: "deno-torrent/peerwire live test",
     });
+    const metadataExtension = wire.use(
+      new UtMetadataExtension({ infoHash, requestTimeoutMs: 30_000 }),
+    );
     const handshake = await withTimeout(
-      wire.handshake(),
+      wire.handshake({ signal }),
       5_000,
       `handshake with ${peer.hostname}:${peer.port}`,
       () => wire?.close(),
     );
-    return handshake.peerId;
+    // Correlated extension operations depend on a single active frame reader.
+    // Treat EOF as a failed attempt when it arrives before verified metadata.
+    readLoop = readUntilClosed(wire, signal, peer);
+    const metadata = await withTimeout(
+      Promise.race([
+        metadataExtension.fetch({ signal, timeoutMs: 30_000 }),
+        readLoop,
+      ]),
+      45_000,
+      `ut_metadata from ${peer.hostname}:${peer.port}`,
+      () => wire?.close(),
+    );
+    return { peerId: handshake.peerId, metadata };
   } finally {
     if (wire) {
       await wire.close();
     } else {
       connection?.close();
+    }
+    await readLoop?.catch(() => undefined);
+  }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Aborted", "AbortError");
+}
+
+async function readUntilClosed(
+  wire: PeerWire,
+  signal: AbortSignal,
+  peer: PeerAddress,
+): Promise<never> {
+  for (;;) {
+    const message = await wire.readMessage({ signal });
+    if (message === null) {
+      throw new Error(
+        `${peer.hostname}:${peer.port} closed before sending metadata`,
+      );
     }
   }
 }
@@ -197,9 +318,13 @@ function withTimeout<T>(
 
 async function parseTorrent(bytes: Uint8Array): Promise<TorrentMetadata> {
   const root = expectDictionary(new BencodeDecoder(bytes).decode(), "torrent");
-  const announceUrl = decoder.decode(
+  const primaryAnnounceUrl = decoder.decode(
     expectBytes(root.get("announce"), "torrent announce URL"),
   );
+  const announceUrls = [
+    primaryAnnounceUrl,
+    ...decodeAnnounceList(root.get("announce-list")),
+  ].filter((url, index, urls) => urls.indexOf(url) === index);
   const info = root.get("info");
   const infoDictionary = expectDictionary(info, "torrent info");
   const length = expectInteger(infoDictionary.get("length"), "torrent length");
@@ -208,11 +333,23 @@ async function parseTorrent(bytes: Uint8Array): Promise<TorrentMetadata> {
   const infoBytes = bytes.subarray(info!.start, info!.end);
 
   return {
-    announceUrl,
+    announceUrls,
     infoHash: await HashUtil.sha1(infoBytes),
+    infoBytes: new Uint8Array(infoBytes),
     length,
     pieceCount: pieces.length / 20,
   };
+}
+
+function decodeAnnounceList(value: BencodeValue | undefined): string[] {
+  if (value === undefined) return [];
+  assert(value.type === "list", "torrent announce-list must be a list");
+  const urls: string[] = [];
+  for (const tier of value.value) {
+    assert(tier.type === "list", "torrent announce tier must be a list");
+    for (const url of tier.value) urls.push(decoder.decode(expectBytes(url)));
+  }
+  return urls;
 }
 
 function percentEncode(bytes: Uint8Array): string {

@@ -10,6 +10,15 @@ export const PEER_ID_LENGTH = 20;
 /** Default upper bound for a peer wire message payload. */
 export const DEFAULT_MAX_MESSAGE_LENGTH = 2 * 1024 * 1024;
 
+/** Maximum block payload accepted by current interoperable clients. */
+export const DEFAULT_MAX_BLOCK_LENGTH = 16 * 1024;
+
+/** Default number of queued requests accepted in either direction. */
+export const DEFAULT_MAX_PENDING_REQUESTS = 250;
+
+/** Default maximum number of bytes waiting in the serialized write queue. */
+export const DEFAULT_MAX_QUEUED_WRITE_BYTES = 4 * 1024 * 1024;
+
 /** Peer wire message IDs from BEP 3 and commonly implemented extensions. */
 export enum PeerMessageId {
   Choke = 0,
@@ -28,6 +37,9 @@ export enum PeerMessageId {
   RejectRequest = 16,
   AllowedFast = 17,
   Extended = 20,
+  HashRequest = 21,
+  Hashes = 22,
+  HashReject = 23,
 }
 
 /** Named bits in the eight reserved handshake bytes. */
@@ -38,4 +50,6 @@ export enum HandshakeExtension {
   ExtensionProtocol = "extensionProtocol",
   /** BEP 5 DHT port message. */
   Dht = "dht",
+  /** BEP 52 BitTorrent v2/hybrid wire protocol. */
+  V2 = "v2",
 }

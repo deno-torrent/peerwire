@@ -19,6 +19,7 @@ Deno.test("handshake round trips IDs and extension flags", () => {
       HandshakeExtension.ExtensionProtocol,
       HandshakeExtension.Dht,
       HandshakeExtension.Fast,
+      HandshakeExtension.V2,
     ],
   });
   assertEquals(bytes.length, HANDSHAKE_LENGTH);

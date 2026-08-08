@@ -86,6 +86,28 @@ export interface ExtendedMessage {
   payload: Uint8Array;
 }
 
+/** Common BEP 52 Merkle hash request fields. */
+export interface HashRequestFields {
+  piecesRoot: Uint8Array;
+  baseLayer: number;
+  index: number;
+  length: number;
+  proofLayers: number;
+}
+
+export interface HashRequestMessage extends HashRequestFields {
+  type: "hashRequest";
+}
+
+export interface HashesMessage extends HashRequestFields {
+  type: "hashes";
+  hashes: Uint8Array;
+}
+
+export interface HashRejectMessage extends HashRequestFields {
+  type: "hashReject";
+}
+
 /** A forward-compatible message whose ID is not known by this library. */
 export interface UnknownMessage {
   type: "unknown";
@@ -111,6 +133,9 @@ export type PeerMessage =
   | RejectRequestMessage
   | AllowedFastMessage
   | ExtendedMessage
+  | HashRequestMessage
+  | HashesMessage
+  | HashRejectMessage
   | UnknownMessage;
 
 /** Encode a peer message, including its four-byte big-endian length prefix. */
@@ -217,6 +242,25 @@ export function decodeMessagePayload(payload: Uint8Array): PeerMessage {
         extensionId: body[0],
         payload: body.slice(1),
       };
+    case PeerMessageId.HashRequest:
+      return {
+        type: "hashRequest",
+        ...decodeHashRequest("hash request", body),
+      };
+    case PeerMessageId.Hashes: {
+      if (body.length < 80 || (body.length - 48) % 32 !== 0) {
+        throw new PeerWireProtocolError(
+          "hashes message must contain a 48-byte header and complete SHA-256 hashes",
+        );
+      }
+      return {
+        type: "hashes",
+        ...decodeHashRequest("hashes", body.subarray(0, 48)),
+        hashes: body.slice(48),
+      };
+    }
+    case PeerMessageId.HashReject:
+      return { type: "hashReject", ...decodeHashRequest("hash reject", body) };
     default:
       return { type: "unknown", id, payload: new Uint8Array(body) };
   }
@@ -301,6 +345,26 @@ function encodeMessagePayload(message: Exclude<PeerMessage, KeepAliveMessage>) {
       body[0] = message.extensionId;
       body.set(message.payload, 1);
       break;
+    case "hashRequest":
+      id = PeerMessageId.HashRequest;
+      body = encodeHashRequest(message);
+      break;
+    case "hashes": {
+      id = PeerMessageId.Hashes;
+      if (message.hashes.length < 32 || message.hashes.length % 32 !== 0) {
+        throw new RangeError(
+          "hashes must contain complete 32-byte SHA-256 hashes",
+        );
+      }
+      body = new Uint8Array(48 + message.hashes.length);
+      body.set(encodeHashRequest(message));
+      body.set(message.hashes, 48);
+      break;
+    }
+    case "hashReject":
+      id = PeerMessageId.HashReject;
+      body = encodeHashRequest(message);
+      break;
     case "unknown":
       if (
         !Number.isInteger(message.id) || message.id < 0 || message.id > 0xff
@@ -315,6 +379,65 @@ function encodeMessagePayload(message: Exclude<PeerMessage, KeepAliveMessage>) {
   payload[0] = id;
   payload.set(body, 1);
   return payload;
+}
+
+function encodeHashRequest(request: HashRequestFields): Uint8Array {
+  // All three BEP 52 hash messages share this fixed 48-byte correlation key.
+  validateHashRequest(request, RangeError);
+  const body = new Uint8Array(48);
+  body.set(request.piecesRoot);
+  const view = new DataView(body.buffer);
+  view.setUint32(32, request.baseLayer);
+  view.setUint32(36, request.index);
+  view.setUint32(40, request.length);
+  view.setUint32(44, request.proofLayers);
+  return body;
+}
+
+function decodeHashRequest(name: string, body: Uint8Array): HashRequestFields {
+  assertLength(name, body, 48);
+  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  const request: HashRequestFields = {
+    piecesRoot: body.slice(0, 32),
+    baseLayer: view.getUint32(32),
+    index: view.getUint32(36),
+    length: view.getUint32(40),
+    proofLayers: view.getUint32(44),
+  };
+  validateHashRequest(request, PeerWireProtocolError);
+  return request;
+}
+
+function validateHashRequest(
+  request: HashRequestFields,
+  ErrorType: typeof RangeError | typeof PeerWireProtocolError,
+): void {
+  if (request.piecesRoot.length !== 32) {
+    throw new ErrorType("piecesRoot must contain 32 bytes");
+  }
+  for (
+    const [name, value] of [
+      ["baseLayer", request.baseLayer],
+      ["index", request.index],
+      ["length", request.length],
+      ["proofLayers", request.proofLayers],
+    ] as const
+  ) {
+    if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+      throw new ErrorType(`${name} must be an unsigned 32-bit integer`);
+    }
+  }
+  if (
+    request.length < 2 || request.length > 512 ||
+    (request.length & (request.length - 1)) !== 0
+  ) {
+    throw new ErrorType(
+      "hash request length must be a power of two from 2 to 512",
+    );
+  }
+  if (request.index % request.length !== 0) {
+    throw new ErrorType("hash request index must be a multiple of length");
+  }
 }
 
 function encodeBlockRequest(request: BlockRequest): Uint8Array {

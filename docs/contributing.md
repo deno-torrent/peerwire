@@ -15,8 +15,8 @@ belong to a higher-level client.
 
 1. Update the version in `deno.jsonc` and run the full local checks plus
    `deno task version` and `deno publish --dry-run`.
-2. Commit the release and create a matching Git tag, for example `v0.1.1` for
-   package version `0.1.1`.
+2. Commit the release and create a matching Git tag, for example `v1.0.1` for
+   package version `1.0.1`.
 3. Push the commit and tag, then create and publish the matching GitHub Release.
 4. The `Publish to JSR` workflow starts only after the GitHub Release is
    published. It verifies the tag, dependency lock, tests, and package contents

@@ -109,6 +109,8 @@ function extensionLocation(extension: HandshakeExtension): [number, number] {
       return [5, 0x10];
     case HandshakeExtension.Dht:
       return [7, 0x01];
+    case HandshakeExtension.V2:
+      return [7, 0x10];
   }
 }
 

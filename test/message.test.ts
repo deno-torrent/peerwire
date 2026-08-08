@@ -30,6 +30,31 @@ const messages: PeerMessage[] = [
   { type: "rejectRequest", pieceIndex: 5, begin: 0, length: 16_384 },
   { type: "allowedFast", pieceIndex: 7 },
   { type: "extended", extensionId: 1, payload: new Uint8Array([100, 1]) },
+  {
+    type: "hashRequest",
+    piecesRoot: new Uint8Array(32).fill(1),
+    baseLayer: 0,
+    index: 0,
+    length: 2,
+    proofLayers: 1,
+  },
+  {
+    type: "hashes",
+    piecesRoot: new Uint8Array(32).fill(2),
+    baseLayer: 0,
+    index: 0,
+    length: 2,
+    proofLayers: 1,
+    hashes: new Uint8Array(64).fill(3),
+  },
+  {
+    type: "hashReject",
+    piecesRoot: new Uint8Array(32).fill(4),
+    baseLayer: 0,
+    index: 0,
+    length: 2,
+    proofLayers: 1,
+  },
   { type: "unknown", id: 99, payload: new Uint8Array([7, 8]) },
 ];
 

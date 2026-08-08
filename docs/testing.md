@@ -9,15 +9,18 @@ deno task test
 The suite only opens local loopback sockets. It covers exact BEP wire layouts,
 codec round trips, 500 deterministic randomized messages, malformed inputs,
 bitfield boundaries, partial stream reads/writes, handshake validation,
-extension negotiation, concurrent writes, large piece frames, EOF behavior,
-state updates, allocation limits, and real TCP and `deno-torrent/utp`
-transports. The in-memory transport intentionally fragments I/O down to one byte
-to exercise behavior that a loopback test can otherwise hide.
+BEP 10 extension negotiation, multi-block `ut_metadata`, IPv4/IPv6 `ut_pex`,
+request correlation and rejection, Fast Extension state, BEP 52 hash messages,
+hybrid info-hash acceptance, deadlines, keep-alives, bounded write queues,
+allocation limits, and real TCP and `deno-torrent/utp` transports. The in-memory
+transport intentionally fragments I/O down to one byte to exercise behavior
+that a loopback test can otherwise hide.
 
 The opt-in live suite is kept in `live_test/`, outside the deterministic test
 directory. It downloads an official Ubuntu torrent, announces to its tracker,
-and completes a peer-wire handshake with one of the returned public peers. It
-does not request or download any pieces:
+negotiates BEP 10 with returned public peers, and uses `ut_metadata` to download
+and verify the raw info dictionary. It does not request or download any payload
+pieces:
 
 ```sh
 deno task test:live
@@ -39,9 +42,10 @@ deno task test:coverage
 deno task coverage
 ```
 
-The current deterministic suite covers 99.5% of source lines and 99.4% of
-branches under Deno 2.9.5. These figures were reproduced locally with
-PowerShell 7.6.4; CI tracks the current Deno 2.x release on Ubuntu.
+The current deterministic suite covers 84.2% of source lines, 83.3% of branches,
+and 91.8% of functions. These figures include the defensive timeout, rejection,
+and transport-failure paths added for version 1.0.0. CI tracks the current Deno
+2.x release on Ubuntu.
 
 Before publishing, run all checks:
 
@@ -50,4 +54,6 @@ deno task fmt
 deno task check
 deno task lint
 deno task test
+deno task version
+deno publish --dry-run
 ```
