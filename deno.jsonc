@@ -1,0 +1,45 @@
+{
+  "name": "@deno-torrent/peerwire",
+  "version": "0.1.0",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "imports": {
+    "@src/": "./src/",
+    "@deno-torrent/toolkit": "jsr:@deno-torrent/toolkit@^2.2.0",
+    "@deno-torrent/utp": "jsr:@deno-torrent/utp@^1.0.0",
+    "std/assert/mod.ts": "jsr:@std/assert@^1.0.19"
+  },
+  "publish": {
+    "exclude": [
+      "test/",
+      "live_test/",
+      ".vscode/",
+      ".github/"
+    ]
+  },
+  "tasks": {
+    "check": "deno check mod.ts",
+    "fmt": "deno fmt --check",
+    "fmt:fix": "deno fmt",
+    "lint": "deno lint",
+    "test": "DENO_ENV=test deno test --allow-net=localhost,127.0.0.1,0.0.0.0 --unstable-net",
+    "test:live": "DENO_ENV=live deno test --allow-net --allow-env=UBUNTU_TORRENT_URL --unstable-net ./live_test",
+    "test:coverage": "DENO_ENV=test deno test --coverage=coverage --allow-net=localhost,127.0.0.1,0.0.0.0 --unstable-net",
+    "coverage": "deno coverage --include=peerwire/src/ coverage"
+  },
+  "test": {
+    "include": ["./test"]
+  },
+  "fmt": {
+    "include": [
+      "./mod.ts",
+      "./src/",
+      "./test/",
+      "./live_test/",
+      "./deno.jsonc",
+      "./.github/",
+      "./README.md",
+      "./README.zh-CN.md"
+    ]
+  }
+}
