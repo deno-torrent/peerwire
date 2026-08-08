@@ -1,0 +1,47 @@
+name: Publish to JSR
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: jsr-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+          cache: true
+
+      - name: Verify dependency lock
+        run: deno install --frozen
+
+      - name: Verify release tag matches package version
+        shell: bash
+        run: |
+          version="$(deno task --quiet version)"
+          test "v${version}" = "${GITHUB_REF_NAME}"
+
+      - name: Verify package quality
+        run: |
+          deno task fmt
+          deno task lint
+          deno task check
+          deno task test
+          deno publish --dry-run
+
+      - name: Publish
+        run: deno publish

@@ -7,12 +7,14 @@
     "@src/": "./src/",
     "@deno-torrent/toolkit": "jsr:@deno-torrent/toolkit@^2.2.0",
     "@deno-torrent/utp": "jsr:@deno-torrent/utp@^1.0.0",
+    "@std/jsonc": "jsr:@std/jsonc@^1.0.2",
     "std/assert/mod.ts": "jsr:@std/assert@^1.0.19"
   },
   "publish": {
     "exclude": [
       "test/",
       "live_test/",
+      "scripts/",
       ".vscode/",
       ".github/"
     ]
@@ -25,7 +27,8 @@
     "test": "DENO_ENV=test deno test --allow-net=localhost,127.0.0.1,0.0.0.0 --unstable-net",
     "test:live": "DENO_ENV=live deno test --allow-net --allow-env=UBUNTU_TORRENT_URL --unstable-net ./live_test",
     "test:coverage": "DENO_ENV=test deno test --coverage=coverage --allow-net=localhost,127.0.0.1,0.0.0.0 --unstable-net",
-    "coverage": "deno coverage --include=peerwire/src/ coverage"
+    "coverage": "deno coverage --include=peerwire/src/ coverage",
+    "version": "deno run --allow-read scripts/package_version.ts"
   },
   "test": {
     "include": ["./test"]
@@ -34,6 +37,7 @@
     "include": [
       "./mod.ts",
       "./src/",
+      "./scripts/",
       "./test/",
       "./live_test/",
       "./deno.jsonc",
