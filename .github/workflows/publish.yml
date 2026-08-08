@@ -1,16 +1,15 @@
 name: Publish to JSR
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: jsr-publish-${{ github.ref }}
+  group: jsr-publish-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
@@ -31,9 +30,11 @@ jobs:
 
       - name: Verify release tag matches package version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           version="$(deno task --quiet version)"
-          test "v${version}" = "${GITHUB_REF_NAME}"
+          test "v${version}" = "${RELEASE_TAG}"
 
       - name: Verify package quality
         run: |
