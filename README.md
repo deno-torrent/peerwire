@@ -11,7 +11,7 @@ the messages introduced by BEP 5, BEP 6, and BEP 10.
 The library provides the protocol layer that sits on top of TCP or μTP. It does
 not perform peer discovery, piece scheduling, hashing, or storage.
 
-- Runtime verified with Deno 2.2.8.
+- Runtime verified with Deno 2.9.5; CI tracks the current Deno 2.x release.
 - Works with `Deno.TcpConn`, `@deno-torrent/utp` connections, and compatible
   custom transports.
 - Public API: `PeerWire`, handshake/message codecs, and `Bitfield`.

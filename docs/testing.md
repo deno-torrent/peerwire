@@ -39,8 +39,9 @@ deno task test:coverage
 deno task coverage
 ```
 
-The current deterministic suite covers 99.7% of source lines and 99.5% of
-branches under Deno 2.2.8.
+The current deterministic suite covers 99.5% of source lines and 99.4% of
+branches under Deno 2.9.5. These figures were reproduced locally with
+PowerShell 7.6.4; CI tracks the current Deno 2.x release on Ubuntu.
 
 Before publishing, run all checks:
 
