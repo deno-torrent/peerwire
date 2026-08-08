@@ -1,5 +1,7 @@
 # Peer Wire for Deno
 
+[![JSR](https://jsr.io/badges/@deno-torrent/peerwire)](https://jsr.io/@deno-torrent/peerwire)
+
 [中文文档](./README.zh-CN.md)
 
 A transport-independent TypeScript implementation of the BitTorrent peer wire

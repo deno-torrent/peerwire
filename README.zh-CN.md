@@ -1,5 +1,7 @@
 # Deno BitTorrent Peer Wire 协议库
 
+[![JSR](https://jsr.io/badges/@deno-torrent/peerwire)](https://jsr.io/@deno-torrent/peerwire)
+
 [English](./README.md)
 
 面向 Deno 的、与传输层无关的 BitTorrent Peer Wire 协议 TypeScript
