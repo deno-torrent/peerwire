@@ -171,6 +171,43 @@ Deno.test("BEP 52 hash requests correlate and hybrid hashes are accepted", async
   await Promise.all([left.close(), right.close()]);
 });
 
+Deno.test("BEP 52 piece lengths validate short pieces at every file boundary", async () => {
+  const [leftTransport, rightTransport] = memoryTransportPair();
+  const options = {
+    infoHash,
+    pieceCount: 3,
+    pieceLength: 16 * 1024,
+    pieceLengths: [16 * 1024, 37, 81],
+    extensions: [HandshakeExtension.V2],
+  };
+  const left = new PeerWire({
+    transport: leftTransport,
+    peerId: "-PW1000-LEFT00000000",
+    ...options,
+  });
+  const right = new PeerWire({
+    transport: rightTransport,
+    peerId: "-PW1000-RIGHT0000000",
+    ...options,
+  });
+  await Promise.all([left.handshake(), right.handshake()]);
+  await right.unchoke();
+  await left.readMessage();
+  await left.request(1, 0, 37);
+  assertEquals((await right.readMessage())?.type, "request");
+  await assertRejects(
+    () => left.request(1, 1, 37),
+    RangeError,
+    "block exceeds piece boundary",
+  );
+  await assertRejects(
+    () => left.request(2, 80, 2),
+    RangeError,
+    "block exceeds piece boundary",
+  );
+  await Promise.all([left.close(), right.close()]);
+});
+
 Deno.test("keepalive and read timeout manage connection lifetime", async () => {
   const keepAlive = await wires();
   keepAlive.left.setKeepAlive(5);

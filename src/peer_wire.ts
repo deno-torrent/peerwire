@@ -65,6 +65,8 @@ export interface PeerWireOptions {
   pieceLength?: number;
   /** Payload size used to derive the final piece boundary. */
   totalLength?: number;
+  /** Exact length of every logical piece, for BEP-52 file-aligned torrents. */
+  pieceLengths?: readonly number[];
   /** Largest length-prefixed peer message accepted or sent. */
   maxMessageLength?: number;
   /** Largest piece block accepted or requested, defaulting to 16 KiB. */
@@ -135,6 +137,7 @@ export class PeerWire implements AsyncIterable<PeerMessage> {
   readonly pieceCount?: number;
   readonly pieceLength?: number;
   readonly totalLength?: number;
+  readonly pieceLengths?: readonly number[];
   readonly maxMessageLength: number;
   readonly maxBlockLength: number;
   readonly maxPendingRequests: number;
@@ -205,6 +208,29 @@ export class PeerWire implements AsyncIterable<PeerMessage> {
     assertOptionalSafeInteger("pieceCount", options.pieceCount, 0);
     assertOptionalSafeInteger("pieceLength", options.pieceLength, 1);
     assertOptionalSafeInteger("totalLength", options.totalLength, 0);
+    if (options.pieceLengths !== undefined) {
+      if (options.pieceLength === undefined) {
+        throw new RangeError(
+          "pieceLength is required when pieceLengths is configured",
+        );
+      }
+      if (
+        options.pieceCount !== undefined &&
+        options.pieceCount !== options.pieceLengths.length
+      ) {
+        throw new RangeError("pieceCount does not match pieceLengths");
+      }
+      for (const length of options.pieceLengths) {
+        if (
+          !Number.isSafeInteger(length) || length < 1 ||
+          length > options.pieceLength
+        ) {
+          throw new RangeError(
+            "pieceLengths entries must be from 1 to pieceLength",
+          );
+        }
+      }
+    }
     if (
       options.totalLength !== undefined && options.pieceLength === undefined
     ) {
@@ -214,7 +240,7 @@ export class PeerWire implements AsyncIterable<PeerMessage> {
     }
     if (
       options.pieceCount !== undefined && options.pieceLength !== undefined &&
-      options.totalLength !== undefined &&
+      options.totalLength !== undefined && options.pieceLengths === undefined &&
       Math.ceil(options.totalLength / options.pieceLength) !==
         options.pieceCount
     ) {
@@ -239,9 +265,12 @@ export class PeerWire implements AsyncIterable<PeerMessage> {
       ? new Uint8Array(expectedPeerId)
       : undefined;
     this.extensions = new Set(options.extensions);
-    this.pieceCount = options.pieceCount;
+    this.pieceCount = options.pieceCount ?? options.pieceLengths?.length;
     this.pieceLength = options.pieceLength;
     this.totalLength = options.totalLength;
+    this.pieceLengths = options.pieceLengths === undefined
+      ? undefined
+      : [...options.pieceLengths];
     this.maxMessageLength = positiveOption(
       "maxMessageLength",
       options.maxMessageLength,
@@ -1151,8 +1180,10 @@ export class PeerWire implements AsyncIterable<PeerMessage> {
       throw new ErrorType("block begin must be a non-negative integer");
     }
     if (this.pieceLength !== undefined) {
-      let actualLength = this.pieceLength;
+      let actualLength = this.pieceLengths?.[request.pieceIndex] ??
+        this.pieceLength;
       if (
+        this.pieceLengths === undefined &&
         this.totalLength !== undefined && this.pieceCount !== undefined &&
         request.pieceIndex === this.pieceCount - 1
       ) {
