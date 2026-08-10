@@ -19,7 +19,7 @@ export const UT_METADATA_BLOCK_LENGTH = 16 * 1024;
 
 /** Limits and optional serving data for {@link UtMetadataExtension}. */
 export interface UtMetadataOptions {
-  /** Expected v1 info hash used to verify downloaded metadata. */
+  /** Expected v1 SHA-1 or v2 SHA-256 info hash for downloaded metadata. */
   infoHash: Uint8Array;
   /** Raw bencoded info dictionary to serve to requesting peers. */
   metadata?: Uint8Array;
@@ -56,7 +56,7 @@ type UtMetadataMessage =
 export class UtMetadataExtension implements PeerWireExtension {
   /** BEP 10 registration name. */
   readonly name: typeof UT_METADATA_NAME = UT_METADATA_NAME;
-  /** Expected SHA-1 digest of the raw info dictionary. */
+  /** Expected SHA-1 (v1) or SHA-256 (v2) digest of the info dictionary. */
   readonly infoHash: Uint8Array;
   /** Maximum metadata size accepted in either direction. */
   readonly maxMetadataSize: number;
@@ -75,8 +75,8 @@ export class UtMetadataExtension implements PeerWireExtension {
 
   /** Create a bounded BEP 9 downloader and optional metadata server. */
   constructor(options: UtMetadataOptions) {
-    if (options.infoHash.length !== 20) {
-      throw new RangeError("ut_metadata infoHash must contain 20 bytes");
+    if (options.infoHash.length !== 20 && options.infoHash.length !== 32) {
+      throw new RangeError("ut_metadata infoHash must contain 20 or 32 bytes");
     }
     this.infoHash = new Uint8Array(options.infoHash);
     this.maxMetadataSize = options.maxMetadataSize ?? 4 * 1024 * 1024;
@@ -182,7 +182,7 @@ export class UtMetadataExtension implements PeerWireExtension {
     this.metadata = new Uint8Array(metadata);
   }
 
-  /** Download, assemble, and SHA-1 verify the remote info dictionary bytes. */
+  /** Download, assemble, and verify the remote info dictionary bytes. */
   async fetch(options: UtMetadataFetchOptions = {}): Promise<Uint8Array> {
     const context = this.#requireContext();
     if (this.metadata) return new Uint8Array(this.metadata);
@@ -232,7 +232,9 @@ export class UtMetadataExtension implements PeerWireExtension {
       metadata.set(block, offset);
       offset += block.length;
     }
-    const digest = await HashUtil.sha1(metadata);
+    const digest = this.infoHash.length === 32
+      ? await HashUtil.sha256(metadata)
+      : await HashUtil.sha1(metadata);
     if (!BytesUtil.equals(digest, this.infoHash)) {
       throw new PeerWireProtocolError(
         "received metadata does not match info hash",

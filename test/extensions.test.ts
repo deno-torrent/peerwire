@@ -55,6 +55,34 @@ Deno.test("ut_metadata downloads, assembles, and verifies metadata", async () =>
   await Promise.all([left.close(), right.close()]);
 });
 
+Deno.test("ut_metadata verifies BEP-52 metadata with the full SHA-256 hash", async () => {
+  const metadata = Uint8Array.from(
+    { length: 16_384 + 19 },
+    (_, index) => (index * 29) & 0xff,
+  );
+  const infoHashV2 = await HashUtil.sha256(metadata);
+  const handshakeHash = infoHashV2.subarray(0, 20);
+  let downloader!: UtMetadataExtension;
+  const { left, right } = await extensionWires(
+    handshakeHash,
+    (left, right) => {
+      downloader = left.use(
+        new UtMetadataExtension({ infoHash: infoHashV2 }),
+      );
+      right.use(
+        new UtMetadataExtension({ infoHash: infoHashV2, metadata }),
+      );
+    },
+  );
+
+  const fetched = downloader.fetch({ timeoutMs: 1_000 });
+  const blocks = Math.ceil(metadata.length / 16_384);
+  for (let index = 0; index < blocks; index++) await right.readMessage();
+  for (let index = 0; index < blocks; index++) await left.readMessage();
+  assertEquals(await fetched, metadata);
+  await Promise.all([left.close(), right.close()]);
+});
+
 Deno.test("ut_pex exchanges bounded IPv4 and IPv6 updates", async () => {
   const infoHash = new Uint8Array(20).fill(7);
   let sender!: UtPexExtension;
